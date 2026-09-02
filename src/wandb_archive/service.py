@@ -9,11 +9,12 @@ from typing import Any
 
 import yaml
 
-from wandb_archive.catalog import CatalogPublisher
+from wandb_archive.catalog import CatalogPublisher, read_catalog
 from wandb_archive.config import AppConfig
 from wandb_archive.discovery import WandbSource
 from wandb_archive.export import RunExporter
 from wandb_archive.model import RunSnapshot
+from wandb_archive.progress import Progress
 from wandb_archive.publisher import PublishedRun, RunPublisher
 from wandb_archive.storage import Storage
 
@@ -34,10 +35,13 @@ class ArchiveService:
         config: AppConfig,
         storage: Storage,
         source: WandbSource | None = None,
+        *,
+        show_progress: bool = False,
     ) -> None:
         self.config = config
         self.storage = storage
-        self.source = source or WandbSource(config)
+        self.progress = Progress(enabled=show_progress)
+        self.source = source or WandbSource(config, progress=self.progress)
         self.publisher = RunPublisher(config, storage)
 
     def plan(
@@ -46,14 +50,54 @@ class ArchiveService:
         project: str | None = None,
         run_path: str | None = None,
         since: str | None = None,
+        detailed: bool = False,
     ) -> dict[str, Any]:
         exporter = RunExporter(self.config)
-        snapshots = [
-            self.source.snapshot(run)
-            for run in self.source.runs(
-                project_override=project, run_path=run_path, since=since
-            )
-        ]
+        source_runs = self.source.runs(
+            project_override=project, run_path=run_path, since=since
+        )
+        if not detailed:
+            logger.info("Reading the current archive catalog")
+            archived_paths = {
+                row["run_path"] for row in read_catalog(self.storage, "runs")
+            }
+            items: list[dict[str, Any]] = []
+            for run in self.progress.track(
+                source_runs,
+                description="Planning runs",
+                total=len(source_runs),
+                unit="run",
+                leave=True,
+            ):
+                preview = self.source.preview(run)
+                archived = preview["run_path"] in archived_paths
+                items.append(
+                    {
+                        **preview,
+                        "already_archived": archived,
+                        "action": "inspect" if archived else "archive",
+                    }
+                )
+            return {
+                "mode": "fast",
+                "project_count": len({item["project"] for item in items}),
+                "run_count": len(items),
+                "archive_count": sum(item["action"] == "archive" for item in items),
+                "inspect_count": sum(item["action"] == "inspect" for item in items),
+                "skip_count": None,
+                "estimated_source_bytes": None,
+                "runs": items,
+            }
+        logger.info("Inspecting complete metadata for %d run(s)", len(source_runs))
+        snapshots = []
+        for run in self.progress.track(
+            source_runs,
+            description="Inspecting runs",
+            total=len(source_runs),
+            unit="run",
+            leave=True,
+        ):
+            snapshots.append(self.source.snapshot(run))
         items = []
         for snapshot in snapshots:
             current = self.publisher.current_fingerprint(snapshot.path)
@@ -76,6 +120,7 @@ class ArchiveService:
                 }
             )
         return {
+            "mode": "detailed",
             "project_count": len({item.project for item in snapshots}),
             "run_count": len(snapshots),
             "archive_count": sum(item["action"] == "archive" for item in items),
@@ -101,7 +146,13 @@ class ArchiveService:
         failures: list[tuple[str, Exception]] = []
         archived = skipped = 0
         exporter = RunExporter(self.config)
-        for run in source_runs:
+        for run in self.progress.track(
+            source_runs,
+            description="Archiving runs",
+            total=len(source_runs),
+            unit="run",
+            leave=True,
+        ):
             snapshot: RunSnapshot | None = None
             fallback_path = "/".join(
                 str(getattr(run, field, "unknown"))

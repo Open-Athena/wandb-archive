@@ -102,6 +102,23 @@ SCHEMAS = {
 }
 
 
+def read_catalog(storage: Storage, name: str) -> list[dict[str, Any]]:
+    """Read one catalog from the generation referenced by archive.json."""
+
+    if not storage.exists("archive.json"):
+        return []
+    index = json.loads(storage.read_bytes("archive.json"))
+    if index.get("archive_schema_version") != ARCHIVE_SCHEMA_VERSION:
+        raise RuntimeError("Cannot read an unsupported archive schema")
+    key = index.get("catalogs", {}).get(name)
+    if not key:
+        return []
+    with tempfile.TemporaryDirectory(prefix="wandb-archive-catalog-read-") as raw:
+        path = Path(raw) / f"{name}.parquet"
+        storage.get_file(key, path)
+        return pq.read_table(path).to_pylist()
+
+
 class CatalogPublisher:
     def __init__(self, config: AppConfig, storage: Storage) -> None:
         self.config = config
@@ -177,20 +194,10 @@ class CatalogPublisher:
     def _read_existing(self) -> dict[str, list[dict[str, Any]]]:
         if not self.storage.exists("archive.json"):
             return {}
-        index = json.loads(self.storage.read_bytes("archive.json"))
-        if index.get("archive_schema_version") != ARCHIVE_SCHEMA_VERSION:
-            raise RuntimeError("Cannot merge an unsupported archive schema")
-        result: dict[str, list[dict[str, Any]]] = {}
-        with tempfile.TemporaryDirectory(prefix="wandb-archive-read-") as raw:
-            directory = Path(raw)
-            for name in ("runs", "files", "artifacts", "tables"):
-                key = index.get("catalogs", {}).get(name)
-                if not key:
-                    continue
-                path = directory / f"{name}.parquet"
-                self.storage.get_file(key, path)
-                result[name] = pq.read_table(path).to_pylist()
-        return result
+        return {
+            name: read_catalog(self.storage, name)
+            for name in ("runs", "files", "artifacts", "tables")
+        }
 
     def _append(
         self,

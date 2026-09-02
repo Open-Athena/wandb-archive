@@ -44,11 +44,28 @@ class RunSelection(ConfigModel):
     exclude_tags: list[str] = Field(default_factory=list)
 
 
+class ApiRetryConfig(ConfigModel):
+    attempts: int = Field(default=6, ge=1, le=20)
+    initial_delay_seconds: float = Field(default=1.0, gt=0, le=60)
+    maximum_delay_seconds: float = Field(default=60.0, gt=0, le=600)
+
+    @model_validator(mode="after")
+    def validate_delays(self) -> Self:
+        if self.maximum_delay_seconds < self.initial_delay_seconds:
+            raise ValueError(
+                "source.retry.maximum_delay_seconds must be greater than or "
+                "equal to initial_delay_seconds"
+            )
+        return self
+
+
 class SourceConfig(ConfigModel):
     entity: str = Field(min_length=1)
     base_url: str | None = None
+    timeout_seconds: int = Field(default=60, ge=1, le=600)
     projects: ProjectSelection = Field(default_factory=ProjectSelection)
     runs: RunSelection = Field(default_factory=RunSelection)
+    retry: ApiRetryConfig = Field(default_factory=ApiRetryConfig)
 
 
 class LocalDestination(ConfigModel):

@@ -123,6 +123,7 @@ public [M2LInES](http://m2lines.github.io/) OSN pod:
 ```yaml
 source:
   entity: ocean_emulators
+  timeout_seconds: 60
 
   projects:
     include:
@@ -140,6 +141,11 @@ source:
     created_before: null
     include_tags: []
     exclude_tags: []
+
+  retry:
+    attempts: 6
+    initial_delay_seconds: 1
+    maximum_delay_seconds: 60
 
 destination:
   type: s3
@@ -187,6 +193,15 @@ projects:
 Run selection can be narrowed by state, creation time, or tags. Running runs
 may be included, but they are recorded as mutable and incomplete. A later
 backup will refresh them rather than treating the earlier generation as final.
+
+Transient W&B failures—including busy services, timeouts, rate limits, and
+temporary connection errors—are retried sequentially with capped exponential
+backoff and full jitter. `source.retry.attempts` includes the initial request.
+The defaults make six attempts with delay ceilings of 1, 2, 4, 8, and 16
+seconds before the final attempt. Increase the limits for unattended backfills;
+authentication and other non-transient errors fail immediately.
+W&B API calls are deliberately not parallelized. `source.timeout_seconds`
+controls the SDK's per-request HTTP timeout and defaults to 60 seconds.
 
 For a W&B self-managed deployment, set its API URL explicitly:
 
@@ -247,10 +262,31 @@ archive is therefore distinguishable from a byte-for-byte export.
 wandb-archive plan archive.yaml
 ```
 
-`plan` authenticates to W&B and reports selected projects, runs, states,
-estimated file bytes, existing archive generations, expected transfers, and
-policy exclusions. It does not download run contents or write to the
-destination.
+By default, `plan` uses W&B's lightweight run listing and the current archive
+catalog. It quickly reports selected projects, runs, states, which runs are new,
+and which archived runs require inspection before their exact action is known.
+It does not download run contents or write to the destination.
+
+For exact source-file estimates, policy exclusions, and skip-versus-refresh
+decisions, request the slower metadata-complete plan:
+
+```bash
+wandb-archive plan archive.yaml --detailed
+```
+
+Project discovery, run listing, and run inspection show separate progress bars
+because each phase can involve paginated API requests. Detailed planning reads
+file and artifact manifests and may take substantially longer on an entity with
+many runs; archive storage volume by itself does not make the default plan
+slower.
+
+Use `-q` or `--quiet` before or after the command to suppress progress bars,
+informational logs, and W&B informational output while retaining the final JSON
+result on standard output:
+
+```bash
+wandb-archive plan archive.yaml --quiet
+```
 
 ### Back up runs
 

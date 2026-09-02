@@ -1,10 +1,15 @@
 source:
   entity: ocean_emulators
+  timeout_seconds: 60
   projects:
     include: ["*"]
     exclude: ["scratch-*"]
   runs:
     states: [finished, failed, crashed, killed, preempted]
+  retry:
+    attempts: 6
+    initial_delay_seconds: 1
+    maximum_delay_seconds: 60
 
 destination:
   type: s3

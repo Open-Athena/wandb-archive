@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -14,6 +15,7 @@ from wandb_archive.model import (
     StagedObject,
 )
 from wandb_archive.normalize import normalize_histories, table_json_to_parquet
+from wandb_archive.retry import call_with_retry
 from wandb_archive.security import (
     include_file,
     is_code_path,
@@ -41,6 +43,25 @@ def _attr(obj: Any, name: str, default: Any = None) -> Any:
         return value
     attrs = getattr(obj, "_attrs", {})
     return attrs.get(name, default) if isinstance(attrs, dict) else default
+
+
+def snapshot_path(run: Any, config: AppConfig) -> str:
+    return "/".join(
+        str(_attr(run, field, default))
+        for field, default in (
+            ("entity", config.source.entity),
+            ("project", "unknown"),
+            ("id", "unknown"),
+        )
+    )
+
+
+def _download(file: Any, root: Path) -> Any:
+    return file.download(root=str(root), replace=True)
+
+
+def _artifact_files(artifact: Any) -> list[Any]:
+    return list(artifact.files(per_page=100))
 
 
 def _relative(name: str) -> Path:
@@ -232,9 +253,13 @@ class RunExporter:
             self.config.archive.strict and snapshot.state in TERMINAL_STATES
         )
         try:
-            result = method(
-                raw_dir,
-                require_complete_history=require_complete,
+            result = call_with_retry(
+                lambda: method(
+                    raw_dir,
+                    require_complete_history=require_complete,
+                ),
+                self.config.source.retry,
+                f"downloading history for {snapshot.path}",
             )
         except Exception as error:
             raise ExportError(
@@ -278,14 +303,23 @@ class RunExporter:
         exclusions: list[dict[str, str]],
     ) -> int:
         table_rows = 0
-        for file in run.files(per_page=100):
+        files = call_with_retry(
+            lambda: list(run.files(per_page=100)),
+            self.config.source.retry,
+            f"listing files for {snapshot_path(run, self.config)}",
+        )
+        for file in files:
             name = str(_attr(file, "name"))
             reason = self.run_file_exclusion(name)
             if reason is not None:
                 exclusions.append({"source": name, "reason": reason})
                 continue
             root = directory / "run-files"
-            downloaded = file.download(root=str(root), replace=True)
+            downloaded = call_with_retry(
+                partial(_download, file, root),
+                self.config.source.retry,
+                f"downloading run file {name}",
+            )
             downloaded.close()
             path = root / _relative(name)
             expected = int(_attr(file, "size", 0) or 0)
@@ -355,16 +389,40 @@ class RunExporter:
     ) -> int:
         include = self.config.archive.include
         table_rows = 0
+        run_path = snapshot_path(run, self.config)
+        logged = (
+            call_with_retry(
+                lambda: list(run.logged_artifacts(per_page=100)),
+                self.config.source.retry,
+                f"listing logged artifacts for {run_path}",
+            )
+            if include.logged_artifacts in {"all", "safe"}
+            else []
+        )
+        used = (
+            call_with_retry(
+                lambda: list(run.used_artifacts(per_page=100)),
+                self.config.source.retry,
+                f"listing used artifacts for {run_path}",
+            )
+            if include.used_artifacts in {"all", "safe"}
+            else []
+        )
         for direction, policy, artifacts in (
-            ("logged", include.logged_artifacts, run.logged_artifacts(per_page=100)),
-            ("used", include.used_artifacts, run.used_artifacts(per_page=100)),
+            ("logged", include.logged_artifacts, logged),
+            ("used", include.used_artifacts, used),
         ):
             if policy in {"none", "metadata", "references"}:
                 continue
             for artifact in artifacts:
                 artifact_name = str(_attr(artifact, "name"))
                 root = directory / "artifacts" / direction / _slug(artifact_name)
-                for file in artifact.files(per_page=100):
+                files = call_with_retry(
+                    partial(_artifact_files, artifact),
+                    self.config.source.retry,
+                    f"listing files in artifact {artifact_name}",
+                )
+                for file in files:
                     name = str(_attr(file, "name"))
                     allowed, reason = include_file(policy, name)  # type: ignore[arg-type]
                     source_name = f"{artifact_name}/{name}"
@@ -373,7 +431,11 @@ class RunExporter:
                             {"source": source_name, "reason": reason or "excluded"}
                         )
                         continue
-                    downloaded = file.download(root=str(root), replace=True)
+                    downloaded = call_with_retry(
+                        partial(_download, file, root),
+                        self.config.source.retry,
+                        f"downloading artifact file {source_name}",
+                    )
                     downloaded.close()
                     path = root / _relative(name)
                     expected = int(_attr(file, "size", 0) or 0)
@@ -406,12 +468,28 @@ class RunExporter:
         exclusions: list[dict[str, str]],
     ) -> None:
         path = directory / "console.jsonl"
-        with path.open("w", encoding="utf-8") as stream:
-            for line in run.console_logs(per_page=1000):
-                payload = {
-                    key: _attr(line, key)
-                    for key in ("number", "timestamp", "level", "label", "content")
-                }
-                stream.write(json.dumps(payload, default=str, sort_keys=True) + "\n")
+
+        def download_logs() -> None:
+            with path.open("w", encoding="utf-8") as stream:
+                for line in run.console_logs(per_page=1000):
+                    payload = {
+                        key: _attr(line, key)
+                        for key in (
+                            "number",
+                            "timestamp",
+                            "level",
+                            "label",
+                            "content",
+                        )
+                    }
+                    stream.write(
+                        json.dumps(payload, default=str, sort_keys=True) + "\n"
+                    )
+
+        call_with_retry(
+            download_logs,
+            self.config.source.retry,
+            f"downloading console logs for {snapshot_path(run, self.config)}",
+        )
         if self._check_sensitive(path, "console logs", exclusions):
             stage.add(path, "console.jsonl", "console-log")

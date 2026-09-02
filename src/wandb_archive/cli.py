@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from collections.abc import Sequence
 
@@ -21,19 +22,33 @@ def _parser() -> argparse.ArgumentParser:
         description="Publish durable, queryable W&B experiment archives.",
     )
     parser.add_argument("--version", action="version", version=__version__)
+    parser.add_argument("-q", "--quiet", action="store_true")
     subparsers = parser.add_subparsers(dest="command", required=True)
     for command in ("plan", "backup"):
         child = subparsers.add_parser(command)
+        child.add_argument(
+            "-q", "--quiet", action="store_true", default=argparse.SUPPRESS
+        )
         child.add_argument("config")
         selection = child.add_mutually_exclusive_group()
         selection.add_argument("--project")
         selection.add_argument("--run", dest="run_path")
         child.add_argument("--since")
+        if command == "plan":
+            child.add_argument(
+                "--detailed",
+                action="store_true",
+                help="inspect complete per-run metadata for exact estimates",
+            )
     verify = subparsers.add_parser("verify")
+    verify.add_argument("-q", "--quiet", action="store_true", default=argparse.SUPPRESS)
     verify.add_argument("config")
     verify.add_argument("--deep", action="store_true")
     verify.add_argument("--anonymous", action="store_true")
     inspect = subparsers.add_parser("inspect")
+    inspect.add_argument(
+        "-q", "--quiet", action="store_true", default=argparse.SUPPRESS
+    )
     inspect.add_argument("config")
     inspect.add_argument("run_path")
     inspect.add_argument("--anonymous", action="store_true")
@@ -42,18 +57,25 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if args.quiet:
+        os.environ["WANDB_SILENT"] = "true"
+    logging.basicConfig(
+        level=logging.ERROR if args.quiet else logging.INFO,
+        format="%(levelname)s %(message)s",
+    )
     try:
         config = load_config(args.config)
         anonymous = bool(getattr(args, "anonymous", False))
         storage = build_storage(config, anonymous=anonymous)
         if args.command in {"plan", "backup"}:
-            service = ArchiveService(config, storage)
+            logging.info("Connecting to W&B")
+            service = ArchiveService(config, storage, show_progress=not args.quiet)
             method = service.plan if args.command == "plan" else service.backup
             result = method(
                 project=args.project,
                 run_path=args.run_path,
                 since=args.since,
+                **({"detailed": args.detailed} if args.command == "plan" else {}),
             )
         elif args.command == "verify":
             result = verify_archive(storage, deep=args.deep)
