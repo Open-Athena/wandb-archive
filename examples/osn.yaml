@@ -1,0 +1,33 @@
+source:
+  entity: ocean_emulators
+  projects:
+    include: ["*"]
+    exclude: ["scratch-*"]
+  runs:
+    states: [finished, failed, crashed, killed, preempted]
+
+destination:
+  type: s3
+  endpoint_url: https://nyu1.osn.mghpcc.org
+  bucket: m2lines-pubs
+  prefix: Samudra/wandb
+  public_url: https://nyu1.osn.mghpcc.org/m2lines-pubs/Samudra/wandb
+
+archive:
+  strict: true
+  include:
+    histories: true
+    system_metrics: true
+    media: true
+    tables: true
+    run_files: safe
+    logged_artifacts: safe
+    used_artifacts: references
+    code: false
+    console_logs: false
+  security:
+    profile: public-safe
+    on_sensitive_value: fail
+  transfers:
+    concurrency: 4
+    retries: 5

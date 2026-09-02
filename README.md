@@ -49,6 +49,7 @@ so other interfaces can be built on top of it.
 | Images, video, and other media | Original browser-native files with a Parquet index |
 | Run files and logged artifacts | Original bytes, manifests, hashes, and lineage |
 | Used artifacts | Lineage and metadata by default; contents are configurable |
+| Zarr stores logged as files or artifacts | Original cloud-optimized store objects |
 
 Every exported object is recorded in a manifest with its size and SHA-256
 digest. The archive also records exclusions and incomplete API responses; it
@@ -61,7 +62,7 @@ copied unless explicitly configured.
 
 ## Quick start
 
-The project will support Python 3.12 or newer and is managed with
+The project supports Python 3.12 or newer and is managed with
 [`uv`](https://docs.astral.sh/uv/).
 
 While developing from a checkout:
@@ -210,6 +211,11 @@ destination:
 `public_url` is optional. When present, catalogs contain browser-readable URLs
 in addition to storage URIs.
 
+For a webpage hosted on another origin, the bucket must also allow cross-origin
+`GET` and `HEAD` requests. Bucket visibility and CORS policy are infrastructure
+settings; this tool records public URLs but deliberately does not change either
+policy.
+
 ### Inclusion policies
 
 Run files and artifact contents support these policies:
@@ -257,7 +263,7 @@ content-addressed objects, and commits a new run generation only after all of
 its required data is present. Existing terminal runs with the same source
 fingerprint and archive schema are skipped.
 
-Useful targeted operations will include:
+Useful targeted operations include:
 
 ```bash
 wandb-archive backup archive.yaml --project samudra
@@ -345,6 +351,34 @@ entity, project, run_id, step, timestamp, metric, value
 Metric names are treated as data rather than Parquet columns, so projects can
 introduce new metrics without changing the shared schema.
 
+### Querying catalogs
+
+The root index points to the current immutable catalog generation. For a
+public archive, fetch it first and pass the referenced Parquet URL to DuckDB:
+
+```bash
+ROOT=https://nyu1.osn.mghpcc.org/m2lines-pubs/Samudra/wandb
+RUNS=$(curl -fsSL "$ROOT/archive.json" | jq -r '.catalogs.runs')
+
+duckdb -c "
+  SELECT project, state, count(*) AS runs
+  FROM read_parquet('$ROOT/$RUNS')
+  GROUP BY ALL
+  ORDER BY project, state;
+"
+```
+
+`files.parquet` maps each run-local logical object to its content-addressed
+blob and public URL. Filter it by `kind = 'metrics'`, `system-metrics`,
+`histograms`, `table`, or `run-file` to locate data for a run without listing
+the bucket. Nested configuration and summary values are strict JSON strings,
+which DuckDB, Polars, and PyArrow can parse without schema drift.
+
+The archive assumes a single catalog writer at a time. The example scheduled
+workflow enforces that with a GitHub Actions concurrency group. Independent
+simultaneous writers could both publish valid run generations while racing to
+advance `archive.json`.
+
 ## Deleting data from W&B
 
 `wandb-archive` never deletes W&B data.
@@ -361,7 +395,7 @@ becoming a destructive W&B operation.
 
 ## GitHub Action
 
-The same CLI will be available as a composite GitHub Action. The repository
+The same CLI is available as a composite GitHub Action. The repository
 using the action owns the schedule, archive configuration, and credentials:
 
 ```yaml
@@ -413,7 +447,7 @@ uv run pytest
 uv run pre-commit run --all-files
 ```
 
-Tests will use fake W&B responses and local object storage by default. Live W&B
+Tests use fake W&B responses and local object storage by default. Live W&B
 and S3-compatible integration tests will be opt-in and will never delete
 source data.
 

@@ -1,0 +1,41 @@
+name: W&B Archive
+description: Publish W&B runs to a queryable S3-compatible archive
+author: Open Athena
+
+inputs:
+  config:
+    description: Path to the archive YAML, relative to the calling repository
+    required: true
+  command:
+    description: Command to run (plan, backup, or verify)
+    required: false
+    default: backup
+  arguments:
+    description: Additional trusted command-line arguments
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      with:
+        enable-cache: true
+        cache-dependency-glob: ${{ github.action_path }}/uv.lock
+    - name: Run W&B Archive
+      shell: bash
+      env:
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_ARGUMENTS: ${{ inputs.arguments }}
+      run: |
+        set -euo pipefail
+        read -r -a extra_args <<< "$INPUT_ARGUMENTS"
+        uv run --project "$GITHUB_ACTION_PATH" --locked -- \
+          wandb-archive "$INPUT_COMMAND" "$GITHUB_WORKSPACE/$INPUT_CONFIG" \
+          "${extra_args[@]}"
+
+branding:
+  icon: archive
+  color: blue

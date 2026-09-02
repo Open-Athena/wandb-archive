@@ -1,0 +1,64 @@
+[project]
+name = "wandb-archive"
+version = "0.1.0"
+description = "Publish durable, queryable W&B experiment archives"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{ name = "Open Athena" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: System :: Archiving :: Backup",
+]
+dependencies = [
+  "pyarrow>=18",
+  "pydantic>=2.8,<3",
+  "pyyaml>=6",
+  "s3fs>=2025.5",
+  "wandb>=0.29",
+]
+
+[project.scripts]
+wandb-archive = "wandb_archive.cli:main"
+
+[dependency-groups]
+dev = [
+  "mypy>=1.15",
+  "pre-commit>=4",
+  "pytest>=8.3",
+  "pytest-cov>=6",
+  "ruff>=0.11",
+  "types-pyyaml>=6",
+]
+
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP", "W"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["pyarrow.*", "s3fs.*", "wandb.*"]
+ignore_missing_imports = true
