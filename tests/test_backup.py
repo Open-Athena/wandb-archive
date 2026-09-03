@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,25 @@ class FakeFile:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(self.data)
         return path.open()
+
+
+class ConcurrentFakeFile(FakeFile):
+    active = 0
+    maximum_active = 0
+    lock = threading.Lock()
+
+    def download(self, root: str, replace: bool = True):
+        with self.lock:
+            type(self).active += 1
+            type(self).maximum_active = max(
+                type(self).maximum_active, type(self).active
+            )
+        try:
+            time.sleep(0.05)
+            return super().download(root, replace)
+        finally:
+            with self.lock:
+                type(self).active -= 1
 
 
 @dataclass
@@ -219,3 +240,27 @@ def test_running_run_is_archived_but_not_deletion_ready(tmp_path: Path) -> None:
     details = inspect_run(LocalStorage(archive), "team/ocean/abc123")
     assert details["contains_live_data"] is True
     assert details["deletion_ready"] is False
+
+
+def test_run_files_download_concurrently(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    config = AppConfig.model_validate(
+        {
+            "source": {"entity": "team"},
+            "destination": {"type": "local", "path": archive},
+            "archive": {"transfers": {"concurrency": 4}},
+        }
+    )
+    run = FakeRun()
+    run._files = [
+        ConcurrentFakeFile(f"media/images/image-{index}.png", b"image")
+        for index in range(4)
+    ]
+    ConcurrentFakeFile.active = 0
+    ConcurrentFakeFile.maximum_active = 0
+    source = WandbSource(config, api=FakeApi(run))
+
+    ArchiveService(config, LocalStorage(archive), source).backup()
+
+    assert ConcurrentFakeFile.maximum_active > 1
+    assert verify_archive(LocalStorage(archive), deep=True)["ok"]

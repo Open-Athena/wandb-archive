@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -308,26 +310,16 @@ class RunExporter:
             self.config.source.retry,
             f"listing files for {snapshot_path(run, self.config)}",
         )
+        selected: list[Any] = []
         for file in files:
             name = str(_attr(file, "name"))
             reason = self.run_file_exclusion(name)
             if reason is not None:
                 exclusions.append({"source": name, "reason": reason})
                 continue
-            root = directory / "run-files"
-            downloaded = call_with_retry(
-                partial(_download, file, root),
-                self.config.source.retry,
-                f"downloading run file {name}",
-            )
-            downloaded.close()
-            path = root / _relative(name)
-            expected = int(_attr(file, "size", 0) or 0)
-            if expected and path.stat().st_size != expected:
-                raise ExportError(
-                    f"Downloaded size mismatch for {name}: "
-                    f"expected {expected}, got {path.stat().st_size}"
-                )
+            selected.append(file)
+        root = directory / "run-files"
+        for file, name, path in self._download_files(selected, root, "run file"):
             if not self._check_sensitive(path, name, exclusions):
                 continue
             stage.add(
@@ -340,6 +332,36 @@ class RunExporter:
             if is_table_path(name) and self.config.archive.include.tables:
                 table_rows += self._convert_table(path, name, directory, stage)
         return table_rows
+
+    def _download_files(
+        self,
+        files: list[Any],
+        root: Path,
+        description: str,
+    ) -> Iterator[tuple[Any, str, Path]]:
+        """Download independent W&B files concurrently, preserving input order."""
+
+        def download(file: Any) -> tuple[Any, str, Path]:
+            name = str(_attr(file, "name"))
+            downloaded = call_with_retry(
+                partial(_download, file, root),
+                self.config.source.retry,
+                f"downloading {description} {name}",
+            )
+            downloaded.close()
+            path = root / _relative(name)
+            expected = int(_attr(file, "size", 0) or 0)
+            if expected and path.stat().st_size != expected:
+                raise ExportError(
+                    f"Downloaded size mismatch for {name}: "
+                    f"expected {expected}, got {path.stat().st_size}"
+                )
+            return file, name, path
+
+        with ThreadPoolExecutor(
+            max_workers=self.config.archive.transfers.concurrency
+        ) as executor:
+            yield from executor.map(download, files)
 
     def run_file_exclusion(self, name: str) -> str | None:
         include = self.config.archive.include
@@ -422,6 +444,7 @@ class RunExporter:
                     self.config.source.retry,
                     f"listing files in artifact {artifact_name}",
                 )
+                selected: list[Any] = []
                 for file in files:
                     name = str(_attr(file, "name"))
                     allowed, reason = include_file(policy, name)  # type: ignore[arg-type]
@@ -431,19 +454,11 @@ class RunExporter:
                             {"source": source_name, "reason": reason or "excluded"}
                         )
                         continue
-                    downloaded = call_with_retry(
-                        partial(_download, file, root),
-                        self.config.source.retry,
-                        f"downloading artifact file {source_name}",
-                    )
-                    downloaded.close()
-                    path = root / _relative(name)
-                    expected = int(_attr(file, "size", 0) or 0)
-                    if expected and path.stat().st_size != expected:
-                        raise ExportError(
-                            f"Downloaded size mismatch for {source_name}: "
-                            f"expected {expected}, got {path.stat().st_size}"
-                        )
+                    selected.append(file)
+                for file, name, path in self._download_files(
+                    selected, root, f"file in artifact {artifact_name}"
+                ):
+                    source_name = f"{artifact_name}/{name}"
                     if not self._check_sensitive(path, source_name, exclusions):
                         continue
                     logical = f"artifacts/{direction}/{_slug(artifact_name)}/{name}"
