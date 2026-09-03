@@ -66,6 +66,21 @@ def _artifact_files(artifact: Any) -> list[Any]:
     return list(artifact.files(per_page=100))
 
 
+def _is_missing_source_object(error: Exception) -> bool:
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        response = getattr(current, "response", None)
+        if getattr(response, "status_code", None) == 404:
+            return True
+        message = str(current).lower()
+        if "404" in message and ("not found" in message or "nosuchkey" in message):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _relative(name: str) -> Path:
     pure = PurePosixPath(name.replace("\\", "/"))
     if pure.is_absolute() or ".." in pure.parts:
@@ -324,7 +339,11 @@ class RunExporter:
                 continue
             selected.append(file)
         root = directory / "run-files"
-        for file, name, path in self._download_files(selected, root, "run file"):
+        for file, name, path, error in self._download_files(selected, root, "run file"):
+            if error is not None:
+                self._handle_download_error(error, name, exclusions)
+                continue
+            assert path is not None
             if not self._check_sensitive(path, name, exclusions):
                 continue
             stage.add(
@@ -343,30 +362,49 @@ class RunExporter:
         files: list[Any],
         root: Path,
         description: str,
-    ) -> Iterator[tuple[Any, str, Path]]:
+    ) -> Iterator[tuple[Any, str, Path | None, Exception | None]]:
         """Download independent W&B files concurrently, preserving input order."""
 
-        def download(file: Any) -> tuple[Any, str, Path]:
+        def download(file: Any) -> tuple[Any, str, Path | None, Exception | None]:
             name = str(_attr(file, "name"))
-            downloaded = call_with_retry(
-                partial(_download, file, root),
-                self.config.source.retry,
-                f"downloading {description} {name}",
-            )
-            downloaded.close()
-            path = root / _relative(name)
-            expected = int(_attr(file, "size", 0) or 0)
-            if expected and path.stat().st_size != expected:
-                raise ExportError(
-                    f"Downloaded size mismatch for {name}: "
-                    f"expected {expected}, got {path.stat().st_size}"
+            try:
+                downloaded = call_with_retry(
+                    partial(_download, file, root),
+                    self.config.source.retry,
+                    f"downloading {description} {name}",
                 )
-            return file, name, path
+                downloaded.close()
+                path = root / _relative(name)
+                expected = int(_attr(file, "size", 0) or 0)
+                if expected and path.stat().st_size != expected:
+                    raise ExportError(
+                        f"Downloaded size mismatch for {name}: "
+                        f"expected {expected}, got {path.stat().st_size}"
+                    )
+                return file, name, path, None
+            except Exception as error:
+                return file, name, None, error
 
         with ThreadPoolExecutor(
             max_workers=self.config.archive.transfers.concurrency
         ) as executor:
             yield from executor.map(download, files)
+
+    @staticmethod
+    def _handle_download_error(
+        error: Exception,
+        source_name: str,
+        exclusions: list[dict[str, str]],
+    ) -> None:
+        if not _is_missing_source_object(error):
+            raise error
+        exclusions.append(
+            {
+                "source": source_name,
+                "reason": "source object is missing from W&B storage",
+                "required": "true",
+            }
+        )
 
     def run_file_exclusion(self, name: str) -> str | None:
         include = self.config.archive.include
@@ -460,10 +498,14 @@ class RunExporter:
                         )
                         continue
                     selected.append(file)
-                for file, name, path in self._download_files(
+                for file, name, path, error in self._download_files(
                     selected, root, f"file in artifact {artifact_name}"
                 ):
                     source_name = f"{artifact_name}/{name}"
+                    if error is not None:
+                        self._handle_download_error(error, source_name, exclusions)
+                        continue
+                    assert path is not None
                     if not self._check_sensitive(path, source_name, exclusions):
                         continue
                     logical = f"artifacts/{direction}/{_slug(artifact_name)}/{name}"

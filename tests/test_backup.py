@@ -53,6 +53,12 @@ class ConcurrentFakeFile(FakeFile):
                 type(self).active -= 1
 
 
+class MissingFakeFile(FakeFile):
+    def download(self, root: str, replace: bool = True):
+        del root, replace
+        raise RuntimeError("404 Not Found: NoSuchKey")
+
+
 @dataclass
 class HistoryResult:
     paths: list[Path]
@@ -262,6 +268,32 @@ def test_terminal_run_with_no_history_is_archived(tmp_path: Path) -> None:
     assert details["complete_history"] is True
     assert details["metric_rows"] == 0
     assert details["deletion_ready"] is True
+
+
+def test_missing_source_file_is_recorded_as_required_exclusion(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "archive"
+    config = AppConfig.model_validate(
+        {
+            "source": {"entity": "team"},
+            "destination": {"type": "local", "path": archive},
+        }
+    )
+    run = FakeRun()
+    run._files.append(MissingFakeFile("media/images/missing.png", b"missing"))
+    source = WandbSource(config, api=FakeApi(run))
+
+    result = ArchiveService(config, LocalStorage(archive), source).backup()
+
+    assert result["archived"] == 1
+    details = inspect_run(LocalStorage(archive), "team/ocean/abc123")
+    assert details["deletion_ready"] is False
+    assert {
+        "source": "media/images/missing.png",
+        "reason": "source object is missing from W&B storage",
+        "required": "true",
+    } in details["exclusions"]
 
 
 def test_run_files_download_concurrently(tmp_path: Path) -> None:
