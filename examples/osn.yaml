@@ -34,5 +34,5 @@ archive:
     profile: public-safe
     on_sensitive_value: fail
   transfers:
-    concurrency: 4
+    concurrency: 8
     retries: 5
