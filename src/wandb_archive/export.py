@@ -273,6 +273,11 @@ class RunExporter:
             raise ExportError(f"W&B history download errors: {errors}")
         paths = [Path(path) for path in getattr(result, "paths", [])]
         if not paths and require_complete:
+            if (
+                snapshot.last_history_step is not None
+                and snapshot.last_history_step < 0
+            ):
+                return [], True, contains_live_data
             raise ExportError("W&B returned no native history files")
         selected: list[Path] = []
         for path in paths:

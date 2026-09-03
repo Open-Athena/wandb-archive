@@ -242,6 +242,28 @@ def test_running_run_is_archived_but_not_deletion_ready(tmp_path: Path) -> None:
     assert details["deletion_ready"] is False
 
 
+def test_terminal_run_with_no_history_is_archived(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    config = AppConfig.model_validate(
+        {
+            "source": {"entity": "team"},
+            "destination": {"type": "local", "path": archive},
+        }
+    )
+    run = FakeRun()
+    run.lastHistoryStep = -1
+    run.download_history_exports = lambda *args, **kwargs: HistoryResult([])  # type: ignore[method-assign]
+    source = WandbSource(config, api=FakeApi(run))
+
+    result = ArchiveService(config, LocalStorage(archive), source).backup()
+
+    assert result["archived"] == 1
+    details = inspect_run(LocalStorage(archive), "team/ocean/abc123")
+    assert details["complete_history"] is True
+    assert details["metric_rows"] == 0
+    assert details["deletion_ready"] is True
+
+
 def test_run_files_download_concurrently(tmp_path: Path) -> None:
     archive = tmp_path / "archive"
     config = AppConfig.model_validate(
