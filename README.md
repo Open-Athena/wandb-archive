@@ -256,7 +256,9 @@ archive is therefore distinguishable from a byte-for-byte export.
 
 `archive.transfers.concurrency` bounds parallel file downloads and object-store
 uploads. A small value such as four improves throughput for media-heavy runs
-without creating unbounded pressure on W&B or the destination.
+without creating unbounded pressure on W&B or the destination. Transfer
+concurrency and retry tuning are operational settings and do not invalidate an
+otherwise unchanged archived run.
 
 ## Commands
 

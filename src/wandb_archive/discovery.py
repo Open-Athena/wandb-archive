@@ -258,7 +258,9 @@ class WandbSource:
         fingerprint_data = {
             **snapshot_data,
             "archive_schema_version": ARCHIVE_SCHEMA_VERSION,
-            "archive_policy": self.config.archive.model_dump(mode="json"),
+            "archive_policy": self.config.archive.model_dump(
+                mode="json", exclude={"transfers"}
+            ),
         }
         return RunSnapshot(
             **snapshot_data,

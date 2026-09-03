@@ -264,3 +264,28 @@ def test_run_files_download_concurrently(tmp_path: Path) -> None:
 
     assert ConcurrentFakeFile.maximum_active > 1
     assert verify_archive(LocalStorage(archive), deep=True)["ok"]
+
+
+def test_transfer_tuning_does_not_change_source_fingerprint(tmp_path: Path) -> None:
+    base = {
+        "source": {"entity": "team"},
+        "destination": {"type": "local", "path": tmp_path / "archive"},
+    }
+    first_config = AppConfig.model_validate(base)
+    tuned_config = AppConfig.model_validate(
+        {
+            **base,
+            "archive": {"transfers": {"concurrency": 8, "retries": 10}},
+        }
+    )
+    changed_policy_config = AppConfig.model_validate(
+        {**base, "archive": {"include": {"media": False}}}
+    )
+    run = FakeRun()
+
+    first = WandbSource(first_config, api=FakeApi(run)).snapshot(run)
+    tuned = WandbSource(tuned_config, api=FakeApi(run)).snapshot(run)
+    changed_policy = WandbSource(changed_policy_config, api=FakeApi(run)).snapshot(run)
+
+    assert first.source_fingerprint == tuned.source_fingerprint
+    assert first.source_fingerprint != changed_policy.source_fingerprint
