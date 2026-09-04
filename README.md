@@ -65,10 +65,44 @@ copied unless explicitly configured.
 
 ## Quick start
 
-The project supports Python 3.12 or newer and is managed with
-[`uv`](https://docs.astral.sh/uv/).
+`wandb-archive` supports Python 3.12 or newer. Install the command-line tool
+from [PyPI](https://pypi.org/project/wandb-archive/) with
+[`uv`](https://docs.astral.sh/uv/) (recommended):
 
-While developing from a checkout:
+```bash
+uv tool install wandb-archive
+```
+
+Or install it with `pip` in an active virtual environment:
+
+```bash
+python -m pip install wandb-archive
+```
+
+Then plan, publish, and verify an archive:
+
+```bash
+# See what would be exported. This reads W&B but writes nothing.
+wandb-archive plan archive.yaml
+
+# Export and publish selected runs.
+wandb-archive backup archive.yaml
+
+# Verify the published archive from the destination.
+wandb-archive verify archive.yaml
+```
+
+To upgrade an existing installation:
+
+```bash
+uv tool upgrade wandb-archive
+# Or, in an active virtual environment:
+python -m pip install --upgrade wandb-archive
+```
+
+### Development installation
+
+Install from a source checkout when contributing to the project:
 
 ```bash
 git clone https://github.com/Open-Athena/wandb-archive.git
@@ -83,13 +117,6 @@ uv run wandb-archive backup archive.yaml
 
 # Verify the published archive from the destination.
 uv run wandb-archive verify archive.yaml
-```
-
-Install the CLI independently from PyPI:
-
-```bash
-uv tool install wandb-archive
-wandb-archive plan archive.yaml
 ```
 
 ## Authentication
