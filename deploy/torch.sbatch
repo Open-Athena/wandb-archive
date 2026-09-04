@@ -15,7 +15,7 @@ set -euo pipefail
 : "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID must be exported when the job is submitted}"
 : "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY must be exported when the job is submitted}"
 
-archive_root="/scratch/$USER/wandb-archive-runtime"
+archive_root="${WANDB_ARCHIVE_RUNTIME_ROOT:-/scratch/$USER/wandb-archive-runtime}"
 export TMPDIR="$archive_root/tmp/$SLURM_JOB_ID"
 export UV_CACHE_DIR="$archive_root/uv-cache"
 export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
