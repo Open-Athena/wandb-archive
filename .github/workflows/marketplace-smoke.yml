@@ -1,0 +1,17 @@
+name: Marketplace action smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run released action
+        uses: Open-Athena/wandb-archive@v0.1.1
+        with:
+          config: README.md
+          command: --version
