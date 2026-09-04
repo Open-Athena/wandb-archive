@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Open Athena" }]
+keywords = ["archive", "backup", "parquet", "s3", "wandb"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
@@ -21,6 +22,12 @@ dependencies = [
   "tqdm>=4.67",
   "wandb>=0.29",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Open-Athena/wandb-archive"
+Documentation = "https://github.com/Open-Athena/wandb-archive#readme"
+Issues = "https://github.com/Open-Athena/wandb-archive/issues"
+Repository = "https://github.com/Open-Athena/wandb-archive.git"
 
 [project.scripts]
 wandb-archive = "wandb_archive.cli:main"

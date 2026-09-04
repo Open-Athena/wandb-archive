@@ -18,6 +18,9 @@ experiment browser.
 > intended first release. Do not delete source data from W&B until
 > `wandb-archive verify` reports that the relevant runs are deletion-ready.
 
+`wandb-archive` is an independent Open Athena project. It is not affiliated
+with or endorsed by Weights & Biases.
+
 ## Why archive W&B?
 
 Experiment trackers are excellent working tools, but research records often
@@ -82,7 +85,7 @@ uv run wandb-archive backup archive.yaml
 uv run wandb-archive verify archive.yaml
 ```
 
-After releases are available, the CLI will also be installable independently:
+Install the CLI independently from PyPI:
 
 ```bash
 uv tool install wandb-archive
