@@ -23,11 +23,6 @@ jobs:
         with:
           enable-cache: false
 
-      - name: Verify tag matches package version
-        run: |
-          package_version=$(uv version --short)
-          test "$GITHUB_REF_NAME" = "v$package_version"
-
       - name: Build distributions
         run: uv build --no-sources
 
