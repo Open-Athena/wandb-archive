@@ -343,6 +343,17 @@ wandb-archive backup archive.yaml --run ocean_emulators/samudra/abc123
 wandb-archive backup archive.yaml --since 2026-08-01
 ```
 
+To resume an interrupted initial backfill without refreshing runs that already
+have a committed archive pointer, use:
+
+```bash
+wandb-archive backup archive.yaml --skip-existing
+```
+
+This option deliberately ignores source changes for existing runs. Use it only
+to complete a backfill; omit it from recurring backups so changed runs receive
+new generations.
+
 ### Verify an archive
 
 ```bash

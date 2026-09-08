@@ -179,6 +179,27 @@ def test_backup_is_idempotent_and_deletion_ready(tmp_path: Path) -> None:
     assert len(list((archive / "runs/team/ocean/abc123/generations").iterdir())) == 1
 
 
+def test_backup_can_skip_existing_run_during_backfill(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    config = AppConfig.model_validate(
+        {
+            "source": {"entity": "team"},
+            "destination": {"type": "local", "path": archive},
+        }
+    )
+    fake_run = FakeRun()
+    source = WandbSource(config, api=FakeApi(fake_run))
+    service = ArchiveService(config, LocalStorage(archive), source)
+    service.backup()
+
+    fake_run.summary = {"loss": 0.25}
+    result = service.backup(skip_existing=True)
+
+    assert result["archived"] == 0
+    assert result["skipped"] == 1
+    assert len(list((archive / "runs/team/ocean/abc123/generations").iterdir())) == 1
+
+
 def test_sensitive_config_can_be_excluded_without_catalog_leak(
     tmp_path: Path,
 ) -> None:

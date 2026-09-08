@@ -40,6 +40,15 @@ def _parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="inspect complete per-run metadata for exact estimates",
             )
+        else:
+            child.add_argument(
+                "--skip-existing",
+                action="store_true",
+                help=(
+                    "resume an initial backfill by skipping every run that already "
+                    "has an archive pointer, even if W&B metadata changed"
+                ),
+            )
     verify = subparsers.add_parser("verify")
     verify.add_argument("-q", "--quiet", action="store_true", default=argparse.SUPPRESS)
     verify.add_argument("config")
@@ -75,7 +84,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 project=args.project,
                 run_path=args.run_path,
                 since=args.since,
-                **({"detailed": args.detailed} if args.command == "plan" else {}),
+                **(
+                    {"detailed": args.detailed}
+                    if args.command == "plan"
+                    else {"skip_existing": args.skip_existing}
+                ),
             )
         elif args.command == "verify":
             result = verify_archive(storage, deep=args.deep)

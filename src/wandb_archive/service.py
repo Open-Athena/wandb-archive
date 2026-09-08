@@ -137,6 +137,7 @@ class ArchiveService:
         project: str | None = None,
         run_path: str | None = None,
         since: str | None = None,
+        skip_existing: bool = False,
     ) -> dict[str, Any]:
         source_runs = self.source.runs(
             project_override=project, run_path=run_path, since=since
@@ -161,12 +162,13 @@ class ArchiveService:
             try:
                 snapshot = self.source.snapshot(run)
                 current = self.publisher.current(snapshot.path)
-                if (
-                    current is not None
-                    and current.manifest.source_fingerprint
+                if current is not None and (
+                    skip_existing
+                    or current.manifest.source_fingerprint
                     == snapshot.source_fingerprint
                 ):
-                    logger.info("Skipping unchanged run %s", snapshot.path)
+                    reason = "existing" if skip_existing else "unchanged"
+                    logger.info("Skipping %s run %s", reason, snapshot.path)
                     reconciled.append((snapshot, current))
                     skipped += 1
                     continue
