@@ -39,9 +39,13 @@ cd "$SLURM_SUBMIT_DIR"
 uv sync --locked --no-dev
 
 backup_attempts="${WANDB_ARCHIVE_JOB_ATTEMPTS:-3}"
+backup_args=(backup examples/osn.yaml)
+if [[ "${WANDB_ARCHIVE_SKIP_EXISTING:-0}" == "1" ]]; then
+  backup_args+=(--skip-existing)
+fi
 backup_complete=0
 for ((attempt = 1; attempt <= backup_attempts; attempt++)); do
-  if uv run --no-sync wandb-archive backup examples/osn.yaml; then
+  if uv run --no-sync wandb-archive "${backup_args[@]}"; then
     backup_complete=1
     break
   fi
