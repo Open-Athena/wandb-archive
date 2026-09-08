@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import random
 import tempfile
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 import s3fs
 
 from wandb_archive.config import AppConfig, LocalDestination, S3Destination
+
+logger = logging.getLogger(__name__)
 
 
 def _key(value: str) -> str:
@@ -66,7 +71,7 @@ class Storage(ABC):
                     f"Existing object has the wrong size: {self.uri(key)}"
                 )
             return False
-        self._retry(lambda: self.put_file(source, key, content_type))
+        self.put_file(source, key, content_type)
         return True
 
     def write_bytes(
@@ -74,17 +79,26 @@ class Storage(ABC):
     ) -> None:
         """Write a small mutable object with configured retry behavior."""
 
-        self._retry(lambda: self.put_bytes(data, key, content_type))
+        self.put_bytes(data, key, content_type)
 
-    def _retry(self, operation) -> None:
+    def _retry[T](self, operation: Callable[[], T]) -> T:
         for attempt in range(self.retries + 1):
             try:
-                operation()
-                return
-            except Exception:
+                return operation()
+            except Exception as error:
                 if attempt >= self.retries:
                     raise
-                time.sleep(min(2**attempt, 30))
+                ceiling = min(2**attempt, 30)
+                delay = random.random() * ceiling
+                logger.warning(
+                    "Storage request failed (attempt %d/%d); retrying in %.1fs: %s",
+                    attempt + 1,
+                    self.retries + 1,
+                    delay,
+                    error,
+                )
+                time.sleep(delay)
+        raise AssertionError("retry loop did not return or raise")
 
 
 class LocalStorage(Storage):
@@ -191,32 +205,32 @@ class S3Storage(Storage):
         return "/".join(parts)
 
     def exists(self, key: str) -> bool:
-        return bool(self.fs.exists(self.path(key)))
+        return self._retry(lambda: bool(self.fs.exists(self.path(key))))
 
     def size(self, key: str) -> int:
-        return int(self.fs.size(self.path(key)))
+        return self._retry(lambda: int(self.fs.size(self.path(key))))
 
     def put_file(self, source: Path, key: str, content_type: str | None = None) -> None:
         kwargs = {"ContentType": content_type} if content_type else {}
-        self.fs.put_file(str(source), self.path(key), **kwargs)
+        self._retry(lambda: self.fs.put_file(str(source), self.path(key), **kwargs))
 
     def put_bytes(self, data: bytes, key: str, content_type: str | None = None) -> None:
         kwargs = {"ContentType": content_type} if content_type else {}
-        self.fs.pipe_file(self.path(key), data, **kwargs)
+        self._retry(lambda: self.fs.pipe_file(self.path(key), data, **kwargs))
 
     def read_bytes(self, key: str) -> bytes:
-        return bytes(self.fs.cat_file(self.path(key)))
+        return self._retry(lambda: bytes(self.fs.cat_file(self.path(key))))
 
     def get_file(self, key: str, destination: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        self.fs.get_file(self.path(key), str(destination))
+        self._retry(lambda: self.fs.get_file(self.path(key), str(destination)))
 
     def list(self, prefix: str) -> list[str]:
         root = "/".join(
             part for part in (self.destination.bucket, self.destination.prefix) if part
         )
         full_prefix = self.path(prefix)
-        found = self.fs.find(full_prefix)
+        found = self._retry(lambda: self.fs.find(full_prefix))
         marker = root.rstrip("/") + "/"
         return sorted(path.removeprefix(marker) for path in found)
 
