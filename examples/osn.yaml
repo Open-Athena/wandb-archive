@@ -1,6 +1,6 @@
 source:
   entity: ocean_emulators
-  timeout_seconds: 60
+  timeout_seconds: 600
   projects:
     include: ["*"]
     exclude: ["scratch-*"]
